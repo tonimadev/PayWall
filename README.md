@@ -35,8 +35,8 @@ Add the dependency to your module's `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    // Replace 'Tag' with the latest release (e.g., v1.0.0)
-    implementation("com.github.YOUR_GITHUB_USER:PayWall:paywall-play:Tag")
+    implementation("com.github.tonimadev.PayWall:paywall-core:0.1")
+    implementation("com.github.tonimadev.PayWall:paywall-play:0.1")
 }
 ```
 
