@@ -10,11 +10,15 @@ android {
     defaultConfig {
         minSdk = libs.versions.minSdk.get().toInt()
     }
+
+    publishing {
+        singleVariant("release")
+    }
 }
 
 dependencies {
     implementation(project(":paywall-core"))
-    implementation(libs.androidx.core-ktx)
+    implementation(libs.androidx.core.ktx)
     implementation(libs.billing.ktx)
 }
 

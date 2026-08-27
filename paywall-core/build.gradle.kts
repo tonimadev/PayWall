@@ -10,10 +10,14 @@ android {
     defaultConfig {
         minSdk = libs.versions.minSdk.get().toInt()
     }
+
+    publishing {
+        singleVariant("release")
+    }
 }
 
 dependencies {
-    implementation(libs.androidx.core-ktx)
+    implementation(libs.androidx.core.ktx)
     api(libs.kotlinx.coroutines.core)
 }
 
