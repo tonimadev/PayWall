@@ -24,9 +24,9 @@ afterEvaluate {
         publications {
             create<MavenPublication>("release") {
                 from(components["release"])
-                groupId = "digital.tonima.paywall"
+                groupId = "com.github.tonimadev.PayWall"
                 artifactId = "paywall-play"
-                version = "1.0.0"
+                version = project.version.toString()
             }
         }
     }
