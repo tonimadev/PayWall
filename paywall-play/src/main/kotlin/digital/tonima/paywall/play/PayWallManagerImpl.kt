@@ -109,9 +109,9 @@ class PayWallManagerImpl(
         if (productList.isEmpty()) return
 
         val params = QueryProductDetailsParams.newBuilder().setProductList(productList).build()
-        billingClient.queryProductDetailsAsync(params) { result, details ->
+        billingClient.queryProductDetailsAsync(params) { result, queryProductDetailsResult ->
             if (result.responseCode == OK) {
-                _productDetailsList.value = details
+                _productDetailsList.value = queryProductDetailsResult.productDetailsList
             }
         }
     }
