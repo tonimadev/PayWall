@@ -17,7 +17,7 @@ android {
 }
 
 dependencies {
-    implementation(project(":paywall-core"))
+    api(project(":paywall-core"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.billing.ktx)
 }
