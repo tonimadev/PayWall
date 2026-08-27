@@ -1,4 +1,6 @@
 # PayWall SDK 💳
+[![](https://jitpack.io/v/tonimadev/PayWall.svg)](https://jitpack.io/#tonimadev/PayWall)
+
 
 PayWall is a lightweight, modular, and highly configurable Android SDK for managing **In-App Purchases** and **Subscriptions** using the Google Play Billing Library.
 
