@@ -1,0 +1,33 @@
+plugins {
+    alias(libs.plugins.android.library)
+    alias(libs.plugins.kotlin.android)
+    id("maven-publish")
+}
+
+android {
+    namespace = "digital.tonima.paywall.play"
+    compileSdk = libs.versions.compileSdk.get().toInt()
+
+    defaultConfig {
+        minSdk = libs.versions.minSdk.get().toInt()
+    }
+}
+
+dependencies {
+    implementation(project(":paywall-core"))
+    implementation(libs.androidx.core-ktx)
+    implementation(libs.billing.ktx)
+}
+
+afterEvaluate {
+    publishing {
+        publications {
+            create<MavenPublication>("release") {
+                from(components["release"])
+                groupId = "digital.tonima.paywall"
+                artifactId = "paywall-play"
+                version = "1.0.0"
+            }
+        }
+    }
+}
