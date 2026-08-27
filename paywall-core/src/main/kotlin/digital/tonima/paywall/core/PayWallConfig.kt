@@ -9,5 +9,6 @@ package digital.tonima.paywall.core
 data class PayWallConfig(
     val inAppProductIds: Set<String> = emptySet(),
     val subscriptionProductIds: Set<String> = emptySet(),
-    val autoAcknowledge: Boolean = true
+    val autoAcknowledge: Boolean = true,
+    val debugMode: Boolean = false
 )
