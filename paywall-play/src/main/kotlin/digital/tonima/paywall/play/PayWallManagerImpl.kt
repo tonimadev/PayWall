@@ -203,37 +203,56 @@ class PayWallManagerImpl(
 
     private fun queryProductDetails() {
         PayWallLog.d("Querying product details...")
-        val productList = mutableListOf<QueryProductDetailsParams.Product>()
 
-        config.inAppProductIds.forEach {
-            productList.add(QueryProductDetailsParams.Product.newBuilder().setProductId(it).setProductType(BillingClient.ProductType.INAPP).build())
-        }
-
-        config.subscriptionProductIds.forEach {
-            productList.add(QueryProductDetailsParams.Product.newBuilder().setProductId(it).setProductType(BillingClient.ProductType.SUBS).build())
-        }
-
-        if (productList.isEmpty()) {
+        if (config.inAppProductIds.isEmpty() && config.subscriptionProductIds.isEmpty()) {
             PayWallLog.w("Product list is empty. Skipping details query.")
             _isReady.value = true
             return
         }
 
-        val params = QueryProductDetailsParams.newBuilder().setProductList(productList).build()
-        billingClient.queryProductDetailsAsync(params) { result, queryProductDetailsResult ->
-            if (result.responseCode == OK) {
-                val details = queryProductDetailsResult.productDetailsList
-                PayWallLog.d("Product details queried: ${details.size} items.")
-                _productDetailsList.value = details
+        scope.launch {
+            // Billing Library 9+ throws IllegalArgumentException if a single
+            // QueryProductDetailsParams mixes INAPP and SUBS products, so each type
+            // must be queried separately and merged afterwards.
+            val inAppDeferred = config.inAppProductIds.takeIf { it.isNotEmpty() }
+                ?.let { ids -> async { queryProductDetailsOfType(ids, BillingClient.ProductType.INAPP) } }
+            val subsDeferred = config.subscriptionProductIds.takeIf { it.isNotEmpty() }
+                ?.let { ids -> async { queryProductDetailsOfType(ids, BillingClient.ProductType.SUBS) } }
+
+            val inAppResult = inAppDeferred?.await()
+            val subsResult = subsDeferred?.await()
+            val failedResult = listOfNotNull(inAppResult, subsResult).firstOrNull { it.details == null }
+
+            if (failedResult != null) {
+                _isReady.value = false
+                scheduleProductDetailsRetry(failedResult.responseCode)
+            } else {
+                val combined = inAppResult?.details.orEmpty() + subsResult?.details.orEmpty()
+                PayWallLog.d("Product details queried: ${combined.size} items.")
+                _productDetailsList.value = combined
                 _isReady.value = true
                 productDetailsRetryAttempt = 0
-            } else {
-                PayWallLog.e("Error querying product details: ${result.debugMessage}")
-                _isReady.value = false
-                scheduleProductDetailsRetry(result.responseCode)
             }
         }
     }
+
+    private data class ProductDetailsQueryResult(val details: List<ProductDetails>?, val responseCode: Int)
+
+    private suspend fun queryProductDetailsOfType(ids: Set<String>, type: String): ProductDetailsQueryResult =
+        suspendCancellableCoroutine { cont ->
+            val productList = ids.map {
+                QueryProductDetailsParams.Product.newBuilder().setProductId(it).setProductType(type).build()
+            }
+            val params = QueryProductDetailsParams.newBuilder().setProductList(productList).build()
+            billingClient.queryProductDetailsAsync(params) { result, queryProductDetailsResult ->
+                if (result.responseCode == OK) {
+                    cont.resume(ProductDetailsQueryResult(queryProductDetailsResult.productDetailsList, result.responseCode)) { _, _, _ -> }
+                } else {
+                    PayWallLog.e("Error querying $type product details: ${result.debugMessage}")
+                    cont.resume(ProductDetailsQueryResult(null, result.responseCode)) { _, _, _ -> }
+                }
+            }
+        }
 
     private fun scheduleProductDetailsRetry(responseCode: Int) {
         if (manuallyDisconnected) return
