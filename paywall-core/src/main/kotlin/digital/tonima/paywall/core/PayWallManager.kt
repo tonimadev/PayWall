@@ -13,9 +13,19 @@ interface PayWallManager {
     val ownedProductIds: StateFlow<Set<String>>
 
     /**
+     * Indica se o SDK está pronto para iniciar fluxos de compra.
+     */
+    val isReady: StateFlow<Boolean>
+
+    /**
      * Conecta o SDK ao serviço de faturamento.
      */
     fun connect()
+
+    /**
+     * Encerra a conexão com o serviço de faturamento e libera recursos.
+     */
+    fun disconnect()
 
     /**
      * Inicia o fluxo de compra para um produto específico.

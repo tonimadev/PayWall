@@ -47,5 +47,24 @@ class MainActivity : AppCompatActivity() {
                 txtStatus.text = "Owned: ${ownedIds.joinToString(", ").ifEmpty { "None" }}"
             }
         }
+
+        lifecycleScope.launch {
+            payWallManager.isReady.collect { ready ->
+                btnPurchase.isEnabled = ready
+                btnSubscribe.isEnabled = ready
+                if (ready) {
+                    btnConnect.text = "Connected"
+                    btnConnect.isEnabled = false
+                } else {
+                    btnConnect.text = "Connect"
+                    btnConnect.isEnabled = true
+                }
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        payWallManager.disconnect()
     }
 }
