@@ -9,12 +9,15 @@ It was designed to be reused across multiple projects, abstracting the complexit
 ## 🚀 Features
 
 - ✅ **Multi-Product Support**: Handle multiple one-time purchases and subscriptions simultaneously.
-- ⚡ **Reactive API**: Observe purchase status changes in real-time using Kotlin `StateFlow`.
+- ⚡ **Reactive API**: Observe purchase status and SDK readiness in real-time using Kotlin `StateFlow`.
 - 🧩 **Modular Architecture**: 
     - `paywall-core`: Pure Kotlin abstractions (no Android dependencies).
     - `paywall-play`: Google Play Billing implementation.
 - 🛠️ **Configurable**: Define your product IDs dynamically at runtime.
 - 🔄 **Auto-Acknowledgment**: Automatically handles purchase acknowledgment to prevent refunds.
+- 🔁 **Automatic Reconnection**: Recovers from dropped Billing connections and transient query
+  failures on its own, with exponential backoff, instead of leaving the SDK stuck until the app
+  is restarted.
 
 ## 📦 Installation
 
@@ -50,24 +53,55 @@ Define which products your app will monitor:
 val payWallConfig = PayWallConfig(
     inAppProductIds = setOf("remove_ads_id", "premium_unlock_id"),
     subscriptionProductIds = setOf("monthly_plan_id", "yearly_plan_id"),
-    autoAcknowledge = true // Defaults to true
+    autoAcknowledge = true, // Defaults to true
+    debugMode = BuildConfig.DEBUG // Enables PayWallLog output; defaults to false
 )
 ```
 
 ### 2. Initialization
 
-Initialize the manager (ideally using Hilt or another DI framework):
+Initialize the manager (ideally using Hilt or another DI framework) as a singleton that lives as
+long as your app does, and connect once:
 
 ```kotlin
 val payWallManager: PayWallManager = PayWallManagerImpl(context, payWallConfig)
 
-// Connect to Google Play Services
+// Connect to Google Play Services. Safe to call again later (e.g. from a
+// "Restore Purchases" button) - it's a no-op if already connected.
 payWallManager.connect()
 ```
 
-### 3. Observing Purchase Status
+If you instead create a `PayWallManager` scoped to a shorter-lived component (an `Activity` or
+`ViewModel`, as the sample app does), call `disconnect()` when that component is torn down to
+release the underlying `BillingClient`:
 
-The SDK provides a `StateFlow` containing all currently owned product IDs:
+```kotlin
+override fun onDestroy() {
+    super.onDestroy()
+    payWallManager.disconnect()
+}
+```
+
+> ⚠️ Once `disconnect()` has been called, don't keep using that same reference across an
+> arbitrarily long-lived scope - call `connect()` again on it and the SDK will transparently
+> create a fresh Billing connection, but a manager you've disconnected for good should just be
+> discarded along with the component that owned it.
+
+### 3. Observing SDK Readiness and Purchase Status
+
+`isReady` tells you when the SDK has finished connecting **and** fetched product details, which is
+the earliest point `launchPurchase`/`launchSubscription` will actually do anything - use it to
+enable/disable your paywall buttons:
+
+```kotlin
+lifecycleScope.launch {
+    payWallManager.isReady.collect { ready ->
+        purchaseButton.isEnabled = ready
+    }
+}
+```
+
+`ownedProductIds` is a `StateFlow` containing all currently owned product IDs:
 
 ```kotlin
 lifecycleScope.launch {
@@ -96,6 +130,19 @@ payWallManager.launchSubscription(activity, "monthly_plan_id")
 // For subscriptions with specific base plans
 payWallManager.launchSubscription(activity, "monthly_plan_id", "base-plan-id")
 ```
+
+Both calls are ignored (and logged) if `isReady.value` is still `false`, so gate your purchase
+buttons on `isReady` as shown above rather than calling these as soon as the screen opens.
+
+### 5. Forcing a Refresh
+
+Useful for a "Restore Purchases" action, or after returning from the Play Store:
+
+```kotlin
+payWallManager.refresh()
+```
+
+If the Billing connection had dropped, `refresh()` reconnects instead of silently failing.
 
 ## 🏗️ Architecture
 
