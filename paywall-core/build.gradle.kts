@@ -19,6 +19,9 @@ android {
 dependencies {
     implementation(libs.androidx.core.ktx)
     api(libs.kotlinx.coroutines.core)
+
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
 }
 
 afterEvaluate {

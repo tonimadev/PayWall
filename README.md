@@ -38,10 +38,14 @@ Add the dependency to your module's `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation("com.github.tonimadev.PayWall:paywall-core:0.1")
-    implementation("com.github.tonimadev.PayWall:paywall-play:0.1")
+    implementation("com.github.tonimadev.PayWall:paywall-core:0.10.0")
+    implementation("com.github.tonimadev.PayWall:paywall-play:0.10.0")
 }
 ```
+
+> Check the badge at the top of this README (or the [JitPack build list](https://jitpack.io/#tonimadev/PayWall))
+> for the latest published version - some early tags (`0.1`-`0.5`) failed to build on JitPack and
+> must not be used.
 
 ## 🛠️ Usage
 

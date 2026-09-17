@@ -9,6 +9,7 @@ import com.android.billingclient.api.Purchase.PurchaseState.PURCHASED
 import digital.tonima.paywall.core.PayWallConfig
 import digital.tonima.paywall.core.PayWallLog
 import digital.tonima.paywall.core.PayWallManager
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -22,7 +23,16 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 
 class PayWallManagerImpl(
     private val context: Context,
-    private val config: PayWallConfig
+    private val config: PayWallConfig,
+    mainDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
+    // Exposed for tests, which need to substitute a mocked BillingClient instead of
+    // performing the real Play Store connection. Production callers should never pass this.
+    private val billingClientFactory: (Context, PurchasesUpdatedListener) -> BillingClient = { ctx, listener ->
+        BillingClient.newBuilder(ctx)
+            .setListener(listener)
+            .enablePendingPurchases(PendingPurchasesParams.newBuilder().enableOneTimeProducts().build())
+            .build()
+    }
 ) : PayWallManager {
 
     init {
@@ -31,7 +41,7 @@ class PayWallManagerImpl(
 
     // Confines all SDK state mutation to the main thread, which is also the thread
     // BillingClient invokes every callback on - so no extra locking is needed.
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val scope = CoroutineScope(SupervisorJob() + mainDispatcher)
 
     private val _ownedProductIds = MutableStateFlow<Set<String>>(emptySet())
     override val ownedProductIds = _ownedProductIds.asStateFlow()
@@ -50,6 +60,8 @@ class PayWallManagerImpl(
     private var productDetailsRetryAttempt = 0
     private var reconnectJob: Job? = null
     private var productDetailsRetryJob: Job? = null
+    private var queryPurchasesJob: Job? = null
+    private var queryProductDetailsJob: Job? = null
 
     private val purchasesUpdatedListener = PurchasesUpdatedListener { billingResult, purchases ->
         PayWallLog.d("onPurchasesUpdated: ${billingResult.responseCode}, count: ${purchases?.size ?: 0}")
@@ -61,13 +73,7 @@ class PayWallManagerImpl(
         }
     }
 
-    private var billingClient: BillingClient = buildBillingClient()
-
-    private fun buildBillingClient(): BillingClient =
-        BillingClient.newBuilder(context)
-            .setListener(purchasesUpdatedListener)
-            .enablePendingPurchases(PendingPurchasesParams.newBuilder().enableOneTimeProducts().build())
-            .build()
+    private var billingClient: BillingClient = billingClientFactory(context, purchasesUpdatedListener)
 
     override fun connect() {
         manuallyDisconnected = false
@@ -87,7 +93,7 @@ class PayWallManagerImpl(
                 // Per BillingClient's contract, a client that had endConnection() called on
                 // it is permanently dead and must never be reused - build a fresh one.
                 PayWallLog.d("Billing Client was closed; creating a new instance.")
-                billingClient = buildBillingClient()
+                billingClient = billingClientFactory(context, purchasesUpdatedListener)
             }
             else -> Unit // DISCONNECTED - fall through and start a new connection below.
         }
@@ -121,6 +127,11 @@ class PayWallManagerImpl(
         manuallyDisconnected = true
         reconnectJob?.cancel()
         productDetailsRetryJob?.cancel()
+        // Without this, a query started just before disconnect() can still resolve
+        // afterwards (BillingClient callbacks are async) and flip isReady back to true
+        // - or repopulate owned products/details - using a client that is being torn down.
+        queryPurchasesJob?.cancel()
+        queryProductDetailsJob?.cancel()
         connectionRetryAttempt = 0
         productDetailsRetryAttempt = 0
         if (billingClient.connectionState != BillingClient.ConnectionState.CLOSED) {
@@ -156,7 +167,8 @@ class PayWallManagerImpl(
 
     private fun queryPurchases() {
         PayWallLog.d("Querying purchases...")
-        scope.launch {
+        queryPurchasesJob?.cancel()
+        queryPurchasesJob = scope.launch {
             // Query both product types concurrently but only publish the combined
             // result once BOTH have resolved, instead of publishing twice from two
             // independent callbacks - which used to make isProUser/isAiUser flicker
@@ -189,9 +201,7 @@ class PayWallManagerImpl(
 
     private fun consolidatePurchases() {
         val allPurchases = lastInAppPurchases + lastSubsPurchases
-        val activeIds = allPurchases.filter { it.purchaseState == PURCHASED }
-            .flatMap { it.products }
-            .toSet()
+        val activeIds = computeOwnedProductIds(allPurchases)
 
         PayWallLog.d("Consolidating owned products. Active IDs: $activeIds")
         _ownedProductIds.value = activeIds
@@ -210,7 +220,8 @@ class PayWallManagerImpl(
             return
         }
 
-        scope.launch {
+        queryProductDetailsJob?.cancel()
+        queryProductDetailsJob = scope.launch {
             // Billing Library 9+ throws IllegalArgumentException if a single
             // QueryProductDetailsParams mixes INAPP and SUBS products, so each type
             // must be queried separately and merged afterwards.
@@ -274,7 +285,7 @@ class PayWallManagerImpl(
         }
     }
 
-    private fun isRecoverable(responseCode: Int): Boolean = when (responseCode) {
+    internal fun isRecoverable(responseCode: Int): Boolean = when (responseCode) {
         BillingClient.BillingResponseCode.BILLING_UNAVAILABLE,
         BillingClient.BillingResponseCode.FEATURE_NOT_SUPPORTED,
         BillingClient.BillingResponseCode.DEVELOPER_ERROR,
@@ -282,7 +293,7 @@ class PayWallManagerImpl(
         else -> true
     }
 
-    private fun retryDelayFor(attempt: Int): Long =
+    internal fun retryDelayFor(attempt: Int): Long =
         (BASE_RETRY_DELAY_MS shl attempt).coerceAtMost(MAX_RETRY_DELAY_MS)
 
     override fun launchPurchase(activity: Activity, productId: String) {
@@ -314,9 +325,14 @@ class PayWallManagerImpl(
             .setProductDetails(details)
 
         if (type == BillingClient.ProductType.SUBS) {
-            val offerToken = details.subscriptionOfferDetails
-                ?.firstOrNull { it.basePlanId == basePlanId }?.offerToken
-                ?: details.subscriptionOfferDetails?.firstOrNull()?.offerToken
+            val offerToken = resolveOfferToken(details.subscriptionOfferDetails.orEmpty(), basePlanId)
+            if (basePlanId != null && offerToken == null) {
+                // A caller-specified basePlanId that doesn't match any available offer must
+                // never silently fall back to a different plan - that would charge the user
+                // for a subscription they didn't ask for.
+                PayWallLog.e("No offer found for basePlanId '$basePlanId' on product $productId. Aborting purchase.")
+                return
+            }
 
             offerToken?.let { paramsBuilder.setOfferToken(it) }
         }
@@ -349,6 +365,23 @@ class PayWallManagerImpl(
             PayWallLog.d("Refresh requested while not connected; reconnecting instead.")
             connect()
         }
+    }
+
+    // Union of every PURCHASED purchase's product IDs, across in-app and subscription purchases.
+    internal fun computeOwnedProductIds(purchases: List<Purchase>): Set<String> =
+        purchases.filter { it.purchaseState == PURCHASED }
+            .flatMap { it.products }
+            .toSet()
+
+    // Null result with a non-null requestedBasePlanId means "not found" - never substitute a
+    // different offer in that case, only when the caller has no preference at all.
+    internal fun resolveOfferToken(
+        offers: List<ProductDetails.SubscriptionOfferDetails>,
+        requestedBasePlanId: String?
+    ): String? = if (requestedBasePlanId == null) {
+        offers.firstOrNull()?.offerToken
+    } else {
+        offers.firstOrNull { it.basePlanId == requestedBasePlanId }?.offerToken
     }
 
     private companion object {
