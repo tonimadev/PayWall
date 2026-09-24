@@ -230,6 +230,47 @@ class PayWallManagerImplQueryTest {
         verify(exactly = 1) { billingClient.queryProductDetailsAsync(any(), any()) }
     }
 
+    // ---- duplicate billing callbacks ----
+
+    @Test
+    fun `a product details callback invoked twice does not crash and keeps the first result`() {
+        every { billingClient.queryPurchasesAsync(any(), any()) } answers {
+            secondArg<PurchasesResponseListener>().onQueryPurchasesResponse(okResult(), emptyList())
+        }
+        val details = mockk<ProductDetails>(relaxed = true)
+        every { details.productId } returns "pro"
+        // Play Billing occasionally delivers a second response for the same query
+        // (e.g. a late SERVICE_DISCONNECTED); resuming twice used to throw "Already resumed".
+        every { billingClient.queryProductDetailsAsync(any(), any()) } answers {
+            val listener = secondArg<ProductDetailsResponseListener>()
+            listener.onProductDetailsResponse(okResult(), QueryProductDetailsResult.create(listOf(details), emptyList()))
+            listener.onProductDetailsResponse(
+                failResult(BillingClient.BillingResponseCode.SERVICE_DISCONNECTED),
+                QueryProductDetailsResult.create(emptyList(), emptyList())
+            )
+        }
+
+        val manager = newManager(PayWallConfig(inAppProductIds = setOf("pro")))
+        manager.connect()
+
+        assertTrue(manager.isReady.value)
+        assertEquals(listOf(details), manager.productDetailsList.value)
+    }
+
+    @Test
+    fun `a purchases callback invoked twice does not crash and keeps the first result`() {
+        every { billingClient.queryPurchasesAsync(any(), any()) } answers {
+            val listener = secondArg<PurchasesResponseListener>()
+            listener.onQueryPurchasesResponse(okResult(), listOf(purchase(products = listOf("pro"))))
+            listener.onQueryPurchasesResponse(failResult(BillingClient.BillingResponseCode.SERVICE_DISCONNECTED), emptyList())
+        }
+
+        val manager = newManager(PayWallConfig())
+        manager.connect()
+
+        assertEquals(setOf("pro"), manager.ownedProductIds.value)
+    }
+
     // ---- disconnect race fix ----
 
     @Test

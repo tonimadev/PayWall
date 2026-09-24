@@ -9,6 +9,8 @@ import com.android.billingclient.api.Purchase.PurchaseState.PURCHASED
 import digital.tonima.paywall.core.PayWallConfig
 import digital.tonima.paywall.core.PayWallLog
 import digital.tonima.paywall.core.PayWallManager
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -187,14 +189,15 @@ class PayWallManagerImpl(
 
     private suspend fun queryPurchasesOfType(type: String): List<Purchase>? =
         suspendCancellableCoroutine { cont ->
+            val resumed = AtomicBoolean(false)
             billingClient.queryPurchasesAsync(
                 QueryPurchasesParams.newBuilder().setProductType(type).build()
             ) { result, purchases ->
                 if (result.responseCode == OK) {
-                    cont.resume(purchases) { _, _, _ -> }
+                    cont.resumeOnce(resumed, purchases)
                 } else {
                     PayWallLog.e("Error querying $type purchases: ${result.debugMessage}")
-                    cont.resume(null) { _, _, _ -> }
+                    cont.resumeOnce(resumed, null)
                 }
             }
         }
@@ -255,15 +258,27 @@ class PayWallManagerImpl(
                 QueryProductDetailsParams.Product.newBuilder().setProductId(it).setProductType(type).build()
             }
             val params = QueryProductDetailsParams.newBuilder().setProductList(productList).build()
+            val resumed = AtomicBoolean(false)
             billingClient.queryProductDetailsAsync(params) { result, queryProductDetailsResult ->
                 if (result.responseCode == OK) {
-                    cont.resume(ProductDetailsQueryResult(queryProductDetailsResult.productDetailsList, result.responseCode)) { _, _, _ -> }
+                    cont.resumeOnce(resumed, ProductDetailsQueryResult(queryProductDetailsResult.productDetailsList, result.responseCode))
                 } else {
                     PayWallLog.e("Error querying $type product details: ${result.debugMessage}")
-                    cont.resume(ProductDetailsQueryResult(null, result.responseCode)) { _, _, _ -> }
+                    cont.resumeOnce(resumed, ProductDetailsQueryResult(null, result.responseCode))
                 }
             }
         }
+
+    // Play Billing can invoke a query listener more than once for the same request
+    // (e.g. a late SERVICE_DISCONNECTED after the real response). Resuming a continuation
+    // twice throws IllegalStateException("Already resumed"), so only the first response wins.
+    private fun <T> CancellableContinuation<T>.resumeOnce(resumed: AtomicBoolean, value: T) {
+        if (resumed.compareAndSet(false, true)) {
+            resume(value) { _, _, _ -> }
+        } else {
+            PayWallLog.w("Ignoring duplicate billing callback.")
+        }
+    }
 
     private fun scheduleProductDetailsRetry(responseCode: Int) {
         if (manuallyDisconnected) return
