@@ -319,15 +319,26 @@ class PayWallManagerImpl(
         launchBillingFlow(activity, productId, BillingClient.ProductType.INAPP)
     }
 
-    override fun launchSubscription(activity: Activity, productId: String, basePlanId: String?) {
+    override fun launchSubscription(
+        activity: Activity,
+        productId: String,
+        basePlanId: String?,
+        offerId: String?,
+    ) {
         if (!isReady.value) {
             PayWallLog.w("LaunchSubscription ignored: SDK not ready.")
             return
         }
-        launchBillingFlow(activity, productId, BillingClient.ProductType.SUBS, basePlanId)
+        launchBillingFlow(activity, productId, BillingClient.ProductType.SUBS, basePlanId, offerId)
     }
 
-    private fun launchBillingFlow(activity: Activity, productId: String, type: String, basePlanId: String? = null) {
+    private fun launchBillingFlow(
+        activity: Activity,
+        productId: String,
+        type: String,
+        basePlanId: String? = null,
+        offerId: String? = null,
+    ) {
         PayWallLog.d("Launching billing flow for $productId ($type)...")
         val details = _productDetailsList.value.find { it.productId == productId }
         if (details == null) {
@@ -340,7 +351,7 @@ class PayWallManagerImpl(
             .setProductDetails(details)
 
         if (type == BillingClient.ProductType.SUBS) {
-            val offerToken = resolveOfferToken(details.subscriptionOfferDetails.orEmpty(), basePlanId)
+            val offerToken = resolveOfferToken(details.subscriptionOfferDetails.orEmpty(), basePlanId, offerId)
             if (basePlanId != null && offerToken == null) {
                 // A caller-specified basePlanId that doesn't match any available offer must
                 // never silently fall back to a different plan - that would charge the user
@@ -390,13 +401,23 @@ class PayWallManagerImpl(
 
     // Null result with a non-null requestedBasePlanId means "not found" - never substitute a
     // different offer in that case, only when the caller has no preference at all.
+    // A requested offer (e.g. a free trial) is preferred inside the matching base plan, but it is
+    // only a preference: Play omits offers the user is not eligible for, and then the base
+    // plan's default offer (no offerId) is used so the purchase still goes through.
     internal fun resolveOfferToken(
         offers: List<ProductDetails.SubscriptionOfferDetails>,
-        requestedBasePlanId: String?
-    ): String? = if (requestedBasePlanId == null) {
-        offers.firstOrNull()?.offerToken
-    } else {
-        offers.firstOrNull { it.basePlanId == requestedBasePlanId }?.offerToken
+        requestedBasePlanId: String?,
+        requestedOfferId: String? = null
+    ): String? {
+        val candidates = if (requestedBasePlanId == null) {
+            offers
+        } else {
+            offers.filter { it.basePlanId == requestedBasePlanId }
+        }
+        if (requestedOfferId == null) return candidates.firstOrNull()?.offerToken
+        return (candidates.firstOrNull { it.offerId == requestedOfferId }
+            ?: candidates.firstOrNull { it.offerId == null }
+            ?: candidates.firstOrNull())?.offerToken
     }
 
     private companion object {

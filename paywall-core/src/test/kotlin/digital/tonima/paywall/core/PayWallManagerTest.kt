@@ -20,7 +20,7 @@ private class FakePayWallManager(initialOwned: Set<String> = emptySet()) : PayWa
     override fun connect() = Unit
     override fun disconnect() = Unit
     override fun launchPurchase(activity: Activity, productId: String) = Unit
-    override fun launchSubscription(activity: Activity, productId: String, basePlanId: String?) = Unit
+    override fun launchSubscription(activity: Activity, productId: String, basePlanId: String?, offerId: String?) = Unit
     override fun refresh() = Unit
 
     fun setOwned(ids: Set<String>) {

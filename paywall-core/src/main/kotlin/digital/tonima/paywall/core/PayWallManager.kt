@@ -34,8 +34,18 @@ interface PayWallManager {
 
     /**
      * Inicia o fluxo de assinatura para um plano específico.
+     *
+     * @param basePlanId plano base desejado; se informado e inexistente, a compra é abortada.
+     * @param offerId oferta desejada dentro do plano base (ex.: teste grátis). Se a oferta não
+     * estiver disponível para o usuário (ex.: ele já usou o teste), usa a oferta padrão do plano
+     * base em vez de abortar.
      */
-    fun launchSubscription(activity: Activity, productId: String, basePlanId: String? = null)
+    fun launchSubscription(
+        activity: Activity,
+        productId: String,
+        basePlanId: String? = null,
+        offerId: String? = null,
+    )
 
     /**
      * Verifica se um produto específico está ativo.

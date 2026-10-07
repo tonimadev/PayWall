@@ -141,9 +141,42 @@ class PayWallManagerImplLogicTest {
         return purchase
     }
 
-    private fun subscriptionOfferMock(basePlanId: String, offerToken: String): ProductDetails.SubscriptionOfferDetails {
+    @Test
+    fun `resolveOfferToken prefers the requested offer inside the matching base plan`() {
+        val base = subscriptionOfferMock(basePlanId = "monthly", offerToken = "token-base")
+        val trial = subscriptionOfferMock(basePlanId = "monthly", offerToken = "token-trial", offerId = "trial")
+        val otherPlanTrial = subscriptionOfferMock(basePlanId = "yearly", offerToken = "token-other", offerId = "trial")
+
+        val result = manager.resolveOfferToken(listOf(base, otherPlanTrial, trial), "monthly", "trial")
+
+        assertEquals("token-trial", result)
+    }
+
+    @Test
+    fun `resolveOfferToken falls back to the base plan default offer when the requested offer is unavailable`() {
+        val promo = subscriptionOfferMock(basePlanId = "monthly", offerToken = "token-promo", offerId = "promo")
+        val base = subscriptionOfferMock(basePlanId = "monthly", offerToken = "token-base")
+
+        val result = manager.resolveOfferToken(listOf(promo, base), "monthly", "trial")
+
+        assertEquals("token-base", result)
+    }
+
+    @Test
+    fun `resolveOfferToken still returns null for an unknown basePlanId even when an offer is requested`() {
+        val trial = subscriptionOfferMock(basePlanId = "monthly", offerToken = "token-trial", offerId = "trial")
+
+        assertNull(manager.resolveOfferToken(listOf(trial), "yearly", "trial"))
+    }
+
+    private fun subscriptionOfferMock(
+        basePlanId: String,
+        offerToken: String,
+        offerId: String? = null,
+    ): ProductDetails.SubscriptionOfferDetails {
         val offer = mockk<ProductDetails.SubscriptionOfferDetails>()
         every { offer.basePlanId } returns basePlanId
+        every { offer.offerId } returns offerId
         every { offer.offerToken } returns offerToken
         return offer
     }

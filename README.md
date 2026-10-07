@@ -133,6 +133,10 @@ payWallManager.launchSubscription(activity, "monthly_plan_id")
 
 // For subscriptions with specific base plans
 payWallManager.launchSubscription(activity, "monthly_plan_id", "base-plan-id")
+
+// Prefer a specific offer (e.g. a free trial) inside that base plan. If the user is not
+// eligible for it, the base plan's default offer is used instead.
+payWallManager.launchSubscription(activity, "monthly_plan_id", "base-plan-id", "free-trial-offer-id")
 ```
 
 Both calls are ignored (and logged) if `isReady.value` is still `false`, so gate your purchase
